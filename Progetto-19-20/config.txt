@@ -1,0 +1,10 @@
+K 4
+C 20
+T 200
+E 5
+P 6
+S1 2
+S2 7
+product_time 10
+logfile log.txt
+interval_time 20
