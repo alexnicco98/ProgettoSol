@@ -3,11 +3,10 @@
 
 #include "utility.h"
 
-// create new client
+// life cycle of client
 void *client(void *arg);
 
-// change the register to the client, and put the
-// client on cashier's tail
-void insertInCashiersQueue(queue *client, var_client_manager *vcm, threadCassiere *registers);
+// insert the client in cashier's tail of that index
+void insertInCashiersQueue(queue *client, int index, var_struct *vcm, threadCassiere *registers);
 
 #endif /* cliente_h */

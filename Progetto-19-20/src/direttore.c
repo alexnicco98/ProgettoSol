@@ -1,9 +1,11 @@
-//#define _POSIX_C_SOURCE  200112L
+#define _POSIX_C_SOURCE  200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
+#include <time.h>
+#include <string.h>
 #include "direttore.h"
 #include "cliente.h"
 #include "cassiere.h"
@@ -12,45 +14,41 @@
 int *queueSize;
 int threshold1 , threshold2;
 int count = 0;
-volatile sig_atomic_t notFinishManager = 1;
-pthread_mutex_t mtx;
+volatile sig_atomic_t notFinishManager = 1;     // 1 if supermarket is open
+volatile sig_atomic_t sigquitReceived;          // 1 if sigquit received
 threadCassiere *cassieri;
-var_client_manager *vcm;
-struct vcmAndCashiers *var;
-pthread_t *threadCashiers;
-pthread_t *threadClients;
+var_struct *vcm;
+struct var_cashier_client *var;
+pthread_t *threadCashiers;                      // pthread_t array of cashiers
+pthread_t *threadClients;                       // pthread_t array of clients
+infoQueueClient iqClientHead;
+infoQueueClient iqClientTail;
+infoQueueCashier *iqCashier;
 
-// move the client in the cashier's queue,
-// in other cashiers randomly
+// move the client in the cashier's queue of other cashier
+// randomly, index represent the cashier that is closing
 void moveClient(int index){
     queue client;
     queue aux = cassieri[index].head;
     while( aux != NULL){
         client = aux;
-        //printf("prodotti comprati: %d\n", client->buyProducts);
         client->next = NULL;
-        /*client.buyProducts = aux->buyProducts;
-        client.served = 0;
-        client.supermarketTime = aux->supermarketTime;
-        client.queueTime = aux->queueTime; // come si calcola?
-        client.changedQueue = aux->changedQueue + 1;
-        client.lock = aux->lock;
-        client.myTurn = aux->myTurn;
-        client.next = NULL;*/
-        insertInCashiersQueue(&client, vcm, cassieri);
+        client->changedQueue += 1;
+        insertInCashiersQueue(&client, index, vcm, cassieri);
 
         aux = aux->next;
     }
     cassieri[index].head = NULL;
     cassieri[index].tail = NULL;
+    #if defined(DEBUG)
+    printf("    [Direttore] i clienti del cassiere %d sono stati spostati\n", index+1);
+    #endif
 }
 
-// close the cashier with bigger index, and
-// move the clients in queue on other cashiers.
-// if numbers of cashiers are > 1
+// close the cashier with bigger index, and move the clients
+// in the queue of other cashiers. If numbers of cashiers are > 1
 void closeCashier(){
-    int index, status;
-    //printf("                sto cercando di chiudere una cassa\n");
+    static int index, status;
     pthread_mutex_lock(&(vcm->mtx));
     if( vcm->openCashiers == 1){
         pthread_mutex_unlock(&(vcm->mtx));
@@ -62,37 +60,27 @@ void closeCashier(){
     // block the cashiers that must close
     pthread_mutex_lock(&(cassieri[index].lock));
     moveClient(index);
-
-
-    pthread_mutex_unlock(&(cassieri[index].lock));
+    cassieri[index].notFinish = 0;
     pthread_mutex_unlock(&(vcm->mtx));
+    pthread_mutex_unlock(&(cassieri[index].lock));
 
-    deleteNotifyTimer(&cassieri[index]);
+    pthread_cancel(cassieri[index].sup);
 
-    //printf("QUI\n");
-    //pthread_detach(cassieri[index].reg);
+    pthread_mutex_lock(&(cassieri[index].lock));
+    pthread_cond_signal(&(cassieri[index].notEmpty));
+    pthread_mutex_unlock(&(cassieri[index].lock));
     pthread_join(cassieri[index].reg, (void*)&status);
-    /*if(status != 0){
-        perror("Error pthread join cashier");
-        exit(EXIT_FAILURE);
-    }*/
 
-    /*if( pthread_cancel(cassieri[index].sup) != 0){
-        perror("Error cancel thread support ");
-        exit(EXIT_FAILURE);
-    }
-    if( pthread_cancel(cassieri[index].reg) != 0){
-        perror("Error cancel thread cashier");
-        exit(EXIT_FAILURE);
-    }*/
-    printf("            Cassiere %d chiuso\n", index+1);
+    printf("    [Direttore] cassiere %d chiuso\n", index+1);
+
+
+
 }
 
 // open the cashier with smaller index, if
 // numbers of cashiers are < K
 void openCashier(){
     int index;
-    //printf("            sto cercando di aprire un nuova cassa\n");
     pthread_mutex_lock(&(vcm->mtx));
     if(vcm->openCashiers == K){
         pthread_mutex_unlock(&(vcm->mtx));
@@ -107,28 +95,28 @@ void openCashier(){
         exit(EXIT_FAILURE);
     }
     pthread_mutex_unlock(&(vcm->mtx));
-    //pthread_detach(threadCashiers[index]);
-    printf("        Aperto nuovo cassiere: %d\n", index+1);
-    //pthread_mutex_unlock(&(vcm->mtx));
+
+    printf("    [Direttore] cassiere %d aperto\n", index+1);
+
 
 }
 
 // check the thresholds, and if the values are not respected
 // open or close the cashiers
 void checkCashiers(){
-    int numRegOneClient = 0;
-    //printf("           sono il direttore e sto controllando\n");
+    static int numRegOneClient = 0, numCashiers;
+    pthread_mutex_lock(&(vcm->mtx));
+    numCashiers = vcm->openCashiers;
+    pthread_mutex_unlock(&(vcm->mtx));
 
-    for(int i=0; i<vcm->openCashiers; i++){
+    for(int i=0; i<numCashiers; i++){
         if( queueSize[i] <= 1 )
             numRegOneClient++;
         if(S1 == numRegOneClient){
-            //printf("ALMENO %d CASSE HANNO 1 CLIENTE IN CODA\n", S1);
             closeCashier();
             return;
         }
         if( queueSize[i] >= S2){
-            //printf("LA CASSA %d, HA %d CLIENTI IN CODA\n", i+1, queueSize[i]);
             openCashier();
             return;
         }
@@ -137,183 +125,183 @@ void checkCashiers(){
 
 // this function is used by cashier to notify the manager
 void updateCashiers(int qSize, int index){
-    //pthread_mutex_lock(&(mtx));
-    //printf("notify manager from reg %d\n", index);
     pthread_mutex_lock(&(vcm->mtx));
     count++;
     queueSize[index] = qSize;
 
-    if( vcm->openCashiers == count && !vcm->finish){
+    if( vcm->openCashiers == count && !vcm->finish ){
         count = 0;
-        //printf("CONTROLLO\n");
         pthread_mutex_unlock(&(vcm->mtx));
         checkCashiers();
-        //pthread_mutex_unlock(&(mtx));
-        //printf("La cassa %d ha in coda %d clienti\n",index+1, qSize);
         return;
     }
 
-
     pthread_mutex_unlock(&(vcm->mtx));
-    //printf("La cassa %d ha in coda %d clienti\n",index+1, qSize);
-    //pthread_mutex_unlock(&(mtx));
 }
 
-// handler for SIGQUIT;
-// terminate alla clients and cashiers immediatly
+// handler for SIGQUIT; Terminate all clients and cashiers immediatly
 void handlerSigQuit(int sig){
     write(1, "catturato SIGQUIT\n", 20);
-    pthread_mutex_lock(&(vcm->mtx));
-    for(int i=0; i<C; i++){
-        pthread_cancel(threadClients[i]);
-    }
-    for(int i=0; i<vcm->openCashiers; i++){
-        pthread_cancel(threadCashiers[i]);
-    }
-    pthread_mutex_unlock(&(vcm->mtx));
-    write(1, "supermarket close\n", 20);
-    // effettuare tutte le varie free
-    free(queueSize);
-    free(cassieri);
-    free(vcm);
-    //free(var);
-    free(threadClients);
-    free(threadCashiers);
-    _exit(EXIT_SUCCESS);
+    notFinishManager = 0;
+    vcm->sigquitReceived = 1;
+    vcm->finish = 1;
 }
 
+// handler for SIGHUP; Wait the termination of clients inside the
+// supermarket, after close the cashiers
 void handlerSigHup(int sig){
     write(1, "catturato SIGHUP\n", 20);
     notFinishManager = 0;
-    pthread_mutex_lock(&(vcm->mtx));
     vcm->finish = 1;
-    pthread_mutex_unlock(&(vcm->mtx));
-    write(1, "supermarket is closing\n", 25);
-    //_exit(EXIT_SUCCESS);
 }
 
+// clean pthread_t of client with this index
 void clientExit(int index){
     threadClients[index] = 0;
-    //printf("client %d exit, thread: %ld\n", index, threadClients[index]);
 }
 
+// wait client to terminate
 void waitClient(){
+    #if defined(DEBUG)
+    printf("Entrato nella waitClient\n");
+    #endif
     pthread_mutex_lock(&(vcm->mtx));
-    int count = vcm->numClient;
-    printf("    Devo far uscire %d clients\n", count);
+    #if defined(DEBUG)
+    printf("    Devo far uscire %d clients\n", vcm->numClient);
+    #endif
 
-    while(count != 0){
-
+    if(vcm->numClient != 0){
+        while(vcm->numClient != 0){
+            pthread_cond_wait(&(vcm->Empty), &(vcm->mtx));
+        }
+    }else{
+        #if defined(DEBUG)
+        printf("    [Direttore] Non ho clienti nel supermercato esco\n");
+        #endif
     }
+    pthread_mutex_unlock(&(vcm->mtx));
+}
+
+void updateInfoClients(pthread_t idClient, int buyProducts, int changedQueue, float supermarketTime, float queueTime) {
+    pthread_mutex_lock(&(vcm->mtx));
+    infoQueueClient new = malloc(sizeof(nodoInfoClient));
+    new->idClient = idClient;
+    new->buyProducts = buyProducts;
+    new->changedQueue = changedQueue;
+    new->supermarketTime = supermarketTime;
+    new->queueTime = queueTime;
+    new->next = NULL;
+    if(iqClientHead == NULL){
+        iqClientHead = new;
+        iqClientTail = new;
+    }
+    else{
+        iqClientTail->next = new;
+        iqClientTail = new;
+    }
+    pthread_mutex_unlock(&(vcm->mtx));
+}
+
+void updateInfoCashiers(int index, int processedProducts, int clientServed, float openTime, float averangeTimeService){
+    pthread_mutex_lock(&(vcm->mtx));
+    iqCashier[index]->processedProducts += processedProducts;
+    iqCashier[index]->clientServed += clientServed;
+    iqCashier[index]->numberClosures++;
+    iqCashier[index]->openTime += openTime;
+    iqCashier[index]->averangeTimeService += averangeTimeService;
 
     pthread_mutex_unlock(&(vcm->mtx));
 }
 
+// life cycle of manager
 void *direttore(void *arg){
-    vcm = arg;
-    int i, status, thresholdC = C-E, add = 0, numExit = 0;
-    //mtx = vcm->mtx; ??
-
-    //pthread_detach(pthread_self());
+    struct var_manager *vcmM = arg;
+    vcm = vcmM->vcm;
+    iqCashier = vcmM->iqCashier;
+    iqClientHead = vcmM->iqClientHead;
+    iqClientTail = vcmM->iqClientTail;
+    static int i;
+    int status, thresholdC = C-E, add = 0, numCashiers;
 
     queueSize = malloc(sizeof(int)*K);
     for(i=0; i<K; i++)
         queueSize[i] = 0;
     cassieri = malloc(sizeof(threadCassiere)*K);
-    var = malloc(sizeof(var_client_manager)*C);
-    /*var.vcm = malloc(sizeof(var_client_manager));
-    var.regs = malloc(sizeof(cassieri));
-    var.vcm = vcm;
-    var.regs = cassieri;*/
+    var = malloc(sizeof(struct var_cashier_client)*C);
 
     struct sigaction sa;
     sigaction(SIGQUIT, NULL, &sa);
+    memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handlerSigQuit;
     sigaction(SIGQUIT, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
 
     sa.sa_handler = handlerSigHup;
     sigaction(SIGHUP, &sa, NULL);
-    sigaction(SIGTSTP, &sa, NULL);
 
-    // at start 1 register open
-    vcm->openCashiers = 1;
-    printf("Cassieri aperti: %d\n", vcm->openCashiers);
 
-    // create first register
+    // at start open a number of cashiers define in the config file
+    pthread_mutex_lock(&(vcm->mtx));
+    printf("    [Direttore] cassieri aperti all'inizio: %d\n", vcm->openCashiers);
+    pthread_mutex_unlock(&(vcm->mtx));
+
+    // create first cashiers
     threadCashiers = malloc(sizeof(pthread_t)*K);
     threadClients = malloc(sizeof(pthread_t)*C);
-    cassiere_create(&cassieri[0], productTime, intervalTime, 0);
-    if( pthread_create(&threadCashiers[0], NULL, &cassiere_work,(void*) &(cassieri[0])) != 0){
-        perror("Error create register ");
-        exit(EXIT_FAILURE);
+    for( i=0; i<vcm->openCashiers; i++){
+        cassiere_create(&cassieri[i], productTime, intervalTime, i);
+        if( pthread_create(&threadCashiers[i], NULL, &cassiere_work,(void*) &(cassieri[i])) != 0){
+            perror("    Error create register ");
+            exit(EXIT_FAILURE);
+        }
     }
-    //pthread_detach(threadCashiers[0]);
 
-    printf("Il supermercato apre con %d casse aperte\n", vcm->openCashiers);
+
     // create first C clients
     for( i=0; i<C; i++){
-
-        //var.vcm = malloc(sizeof(var_client_manager));
-        //var.regs = malloc(sizeof(cassieri));
         var[i].vcm = vcm;
         var[i].regs = cassieri;
         var[i].index = i;
-        //printf("indice client %d\n", i);
         if( pthread_create(&threadClients[i], NULL, &client, (void*) &var[i]) != 0){
-            perror("Error create client ");
+            perror("    Error create client ");
             exit(EXIT_FAILURE);
         }
-        //pthread_detach(threadClients[i]);
     }
 
-
-    /*while(notFinishManager){
-        // aspetta
-    }*/
-
+    // cycle for insert new client in the supermarket when
+    // C-E clients are exit
     while(notFinishManager){
-        // crea nuovi clienti e si mette in attesa di essere
-        // informato dai cassieri
+        fflush(stdout);
         pthread_mutex_lock(&(vcm->mtx));
 
         // if numbers of client inside supermarket is less
         // than numbers of threshold then add new E client
         while( vcm->numClient > thresholdC)
             pthread_cond_wait(&(vcm->NotFullClient), &(vcm->mtx));
-        printf("Creo %d nuovi clienti\n", E);
+
+        if( !notFinishManager ){
+            pthread_mutex_unlock(&(vcm->mtx));
+            continue;
+        }
+        printf("    [Direttore] creo %d nuovi clienti\n", E);
         vcm->numClient += E;
-        /*for( i=vcm->numClient-1; i<(vcm->numClient - 1 + E); i++){
-            printf("indice assegnamento nuovo cliente %d\n", i);
-            if( pthread_create(&threadClients[i], NULL, &client, (void*) var) != 0){
-                perror("Error create client ");
-                exit(EXIT_FAILURE);
-            }
-            //pthread_detach(threadClients[i]);
-        }*/
         i = 0;
         while(add < E && i<C){
             if(threadClients[i] != 0){
-                //printf("index: %d, not 0: %ld\n",i, threadClients[i]);
                 i++;
                 continue;
             }
-            //var.vcm = malloc(sizeof(var_client_manager));
-            //var.regs = malloc(sizeof(cassieri));
             var[i].vcm = vcm;
             var[i].regs = cassieri;
             var[i].index = i;
-            printf("indice assegnamento nuovo cliente %d\n", i);
             add++;
             if( pthread_create(&threadClients[i], NULL, &client, (void*) &var[i]) != 0){
-                perror("Error create client ");
+                perror("    Error create client ");
                 exit(EXIT_FAILURE);
             }
-
+            i++;
         }
         if(add != E){
-            printf("add: %d\n", add);
-            perror("Error create new client");
+            perror("    Error create new client");
             exit(EXIT_FAILURE);
         }
         add = 0;
@@ -321,66 +309,55 @@ void *direttore(void *arg){
         pthread_mutex_unlock(&(vcm->mtx));
     }
 
-    // devo far uscire tutti i clienti
-    //waitClient();
-    pthread_mutex_lock(&(vcm->mtx));
-    for(i=0; i<vcm->openCashiers; i++){
-        printClient(cassieri[i].head, cassieri[i].index);
+    // if i received a signal SIGQUIT i must close the clients
+    // and the  cashiers as fast as possible
+    if( vcm->sigquitReceived ){
+        pthread_mutex_lock(&(vcm->mtx));
+        for(i=0; i<C; i++){
+            pthread_cancel(threadClients[i]);
+        }
+        for(i=0; i<vcm->openCashiers; i++){
+            cassieri[i].notFinish = 0;
+            pthread_cancel(cassieri[i].sup);
+            pthread_cancel(threadCashiers[i]);
+        }
+        pthread_mutex_unlock(&(vcm->mtx));
+        #if defined(DEBUG)
+        printf("    [Direttore] Ho fatto uscire tutti i clienti e chiuso i cassieri\n");
+        #endif
+        return NULL;
     }
+
+    // wait all clients
+    waitClient();
+
+    pthread_mutex_lock(&(vcm->mtx));
+    printf("    [Direttore] Persone ancora nel supermercato: %d, cassieri aperti %d\n", vcm->numClient, vcm->openCashiers);
+    numCashiers = vcm->openCashiers;
+    // close all open cashiers
     pthread_mutex_unlock(&(vcm->mtx));
-
-    for(i=0; i<C; i++){
-        if(threadClients[i] == 0)
-            continue;
-        printf("    indice client join %d\n", i);
-        numExit++;
-        pthread_join(threadClients[i], (void*) &status);
-        //pthread_detach(threadClients[i]);
-    }
-    printf("Client usciti %d\n", numExit);
-    //sleep(1);
-    pthread_mutex_lock(&(vcm->mtx));
-    printf("Persone ancora nel supermercato: %d, cassieri aperti %d\n", vcm->numClient, vcm->openCashiers);
-    for(i=0; i<vcm->openCashiers; i++){
-        deleteNotifyTimer(&cassieri[i]);         // mi da problemi
-        //printf("deleteNotifyTimer finito\n");
-
-        pthread_join(threadCashiers[i], (void*)&status);
-
-        //pthread_mutex_unlock(&(cassieri[i].lock));
-        printf("cassiere finito\n");
-
-        /*if( status != 0){
-            perror("Error pthread join");
-            exit(EXIT_FAILURE);
-        }*/
-        //pthread_cond_signal(&(cassieri[i].notEmpty));
-        /*if( pthread_join(threadCashiers[i], (void*)&status) != 0){
-            perror("Error pthread join");
-            exit(EXIT_FAILURE);
-        }*/
-        /*pthread_mutex_lock(&(cassieri[i].lock));
+    for(i=0; i<numCashiers; i++){
+        pthread_mutex_lock(&(cassieri[i].lock));
         cassieri[i].notFinish = 0;
         pthread_mutex_unlock(&(cassieri[i].lock));
-        pthread_join(cassieri[i].sup, (void*) &status);*/
-        /*pthread_mutex_lock(&(cassieri[i].lock));
-        pthread_detach(cassieri[i].sup);
-        pthread_detach(threadCashiers[i]);
-        pthread_mutex_unlock(&(cassieri[i].lock));*/
+        pthread_cancel(cassieri[i].sup);
+        pthread_cond_signal(&(cassieri[i].notEmpty));
+        pthread_join(threadCashiers[i], (void*)&status);
 
-        //pthread_cancel(threadCashiers[i]);
     }
-    pthread_mutex_unlock(&(vcm->mtx));
-    printf("SONO IL DIRETTORE: STO TERMINANDO\n");
-    //free(queueSize);
-    //free(cassieri);
-    //free(vcm);
+    // update info cashiers
+    for(i=0; i<K; i++){
+        if(iqCashier[i]->clientServed != 0)
+            iqCashier[i]->averangeTimeService = (float)iqCashier[i]->averangeTimeService / iqCashier[i]->clientServed;
+    }
+    #if defined(DEBUG)
+    printf("    [Direttore] ho finito di chiudere i cassieri\n");
+    #endif
+    free(queueSize);
+    free(cassieri);
     free(var);
     free(threadClients);
     free(threadCashiers);
-    //exit(EXIT_SUCCESS);
-    //pthread_detach(pthread_self());
 
-    pthread_exit(NULL);
-    //return NULL;
+    return NULL;
 }
