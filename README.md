@@ -106,9 +106,10 @@ dal processo supermercato al termine della sua esecuzione, e produce un sunto de
 specifico, lo script produce sullo standard output le seguenti informazioni.
 
 Per i clienti: 
-| id cliente | n. prodotti acquistati | tempo totale nel super. | tempo tot. speso in coda | n. di code visitate |
+`<| id cliente | n. prodotti acquistati | tempo totale nel super. | tempo tot. speso in coda | n. di code visitate |>`
+
 Per le casse:
-| id cassa | n. prodotti elaborati | n. di clienti | tempo tot. di apertura | tempo medio di servizio | n. di chiusure |
+`<| id cassa | n. prodotti elaborati | n. di clienti | tempo tot. di apertura | tempo medio di servizio | n. di chiusure |>`
 
 I tempi vanno espressi in secondi con al più 3 cifre decimali. Lo studente, se lo ritiene, può arricchire le
 informazioni prodotte dallo script.
