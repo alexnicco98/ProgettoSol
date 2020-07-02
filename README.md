@@ -1,4 +1,4 @@
-# ProgettoSol
+### ProgettoSol
 progetto sistemi operativi 2019/2020
 
 Università di Pisa-- Dipartimento di Informatica
@@ -9,7 +9,7 @@ Docenti: G. Prencipe (Corso A), M. Torquati (Corso B)
 Data pubblicazione 2 Maggio 2020
 Revisione: 5 Maggio 2020
 
-Introduzione
+## Introduzione
 Lo studente dovrà realizzare la simulazione di un sistema che modella un supermercato con K casse e
 frequentato da un certo numero di clienti. Il supermercato è diretto da un direttore che ha facoltà di aprire e
 chiudere una o più casse delle K totali (lasciandone attiva almeno una). Il numero dei clienti nel supermercato è
@@ -23,8 +23,9 @@ Un cliente acquista fino a P>=0 prodotti. Ogni cassa attiva ha un cassiere che s
 un certo tempo di servizio. Il tempo di servizio del cassiere ha una parte costante (diversa per ogni cassiere) più
 una parte variabile che dipende linearmente dal numero di prodotti acquistati dal cliente che sta servendo. 
 I clienti che non hanno acquistato prodotti (P=0), non si mettono in coda alle casse, ma prima di uscire dal
-supermercato devono attendere il permesso di uscire dal direttore.   
-Il supermercato
+supermercato devono attendere il permesso di uscire dal direttore. 
+
+## Il supermercato
 Il supermercato è modellato come un singolo processo multi-threaded con al più K thread attivi come cassieri e
 C thread attivi corrispondenti ai clienti che sono nel supermercato. Eventuali altri thread di “supporto” (oltre al
 thread main) possono essere presenti nel sistema a discrezione dello studente.
@@ -44,18 +45,18 @@ di clienti serviti, il numero di prodotti acquistati; per ogni cliente: il tempo
 tempo di attesa in coda, se e quante volte ha cambiato coda, il numero di prodotti acquistati; per le casse: il
 numero di clienti serviti, il tempo di ogni periodo di apertura della cassa, il numero di chiusure, il tempo di
 servizio di ogni cliente servito.  
-Il cassiere
+
+## Il cassiere
 I clienti si accodano in modo random alle casse aperte nel momento in cui hanno terminano gli acquisti, e
 vengono serviti in ordine di arrivo dal cassiere. Il thread cassiere impiega un tempo fisso (diverso per ogni
 cassiere nel range 20-80 millisecondi) ed un tempo variabile che dipende in modo lineare dal numero di prodotti
 che il cliente ha acquistato (il tempo di gestione di un singolo prodotto da parte di un cassiere è fisso, ed è
-
-
 specificato nel file di configurazione). Il direttore viene informato ad intervalli regolari dai cassieri (l’ampiezza
 di tale intervallo è definita anch’essa nel file di configurazione) sul numero di clienti in coda alla cassa. Quando
 una cassa viene chiusa dal direttore, il thread cassiere termina dopo aver servito il cliente corrente. Gli eventuali
 altri clienti in coda si devono rimettere in coda in altre casse.   
-Il cliente
+
+## Il cliente
 Ogni cliente che entra nel supermercato ha associato un tempo per gli acquisti che varia in modo casuale da 10 a
 T>10 millisecondi, ed un numero di prodotti che acquisterà che varia da 0 a P>0. Tali valori vengono associati
 al thread cliente all’atto della sua entrata nel supermercato.   
@@ -67,7 +68,8 @@ spostarsi, si prende il rischio che la cassa in cui si muoverà potrebbe essere 
 In tal caso perderà la posizione che aveva nella vecchia cassa e dovrà rimettersi in coda in una delle casse aperte.
 Un cliente con 0 prodotti acquistati non si mette in coda in nessuna cassa, ma dovrà informare il direttore che
 intende uscire e dovrà attendere la sua autorizzazione prima di farlo. 
-Il direttore
+
+## Il direttore
 Il direttore, sulla base delle informazioni ricevute dai cassieri, decide se aprire o chiudere casse (al massimo le
 casse aperte sono K, ed almeno 1 cassa deve rimanere aperta). La decisione viene presa sulla base di alcuni
 valori soglia S1 ed S2 definiti dallo studente nel file di configurazione. S1 stabilisce la soglia per la chiusura di
@@ -80,7 +82,8 @@ supermercato inviandogli lo stesso segnale. Nel caso di SIGHUP, il supermercato 
 clienti e deve attendere che tutti i clienti presenti nel supermercato terminino gli acquisti. Nel caso di segnale
 SIGQUIT, il supermercato chiude immediatamente facendo uscire tutti i clienti al suo interno. Il direttore attende
 che il supermercato termini prima di terminare a sua volta. 
-Makefile
+
+## Makefile
 Il progetto dovrà includere un Makefile avente, tra gli altri, i target all (per generare gli eseguibili del programma
 supermercato e direttore), clean (per ripulire la directory di lavoro dai file generati, socket file, logs, librerie,
 etc.), e due target di tests: test1 e test2. Il target test1 deve far partire il processo direttore, quindi il processo
@@ -97,21 +100,20 @@ all’intera simulazione appena conclusa. Il test si intende superato se non si 
 sunto delle statistiche relative alla simulazione riporta “valori ragionevoli” (cioè, non ci sono valori negativi,
 valori troppo alti, campi vuoti, etc...). 
 
-
-Lo script analisi.sh
+## Lo script analisi.sh
 Lo studente dovrà realizzare uno script Bash con nome analisi.sh che effettua il parsing del file di log prodotto
 dal processo supermercato al termine della sua esecuzione, e produce un sunto della simulazione. Nello
-specifico, lo script produce sullo standard output le seguenti informazioni. 
+specifico, lo script produce sullo standard output le seguenti informazioni.
+
 Per i clienti: 
 | id cliente | n. prodotti acquistati | tempo totale nel super. | tempo tot. speso in coda | n. di code visitate |
 Per le casse:
 | id cassa | n. prodotti elaborati | n. di clienti | tempo tot. di apertura | tempo medio di servizio | n. di chiusure |
 
- 
-
 I tempi vanno espressi in secondi con al più 3 cifre decimali. Lo studente, se lo ritiene, può arricchire le
 informazioni prodotte dallo script.
-Note finali
+
+## Note finali
 Ci si attende che tutto il codice sviluppato sia, per quanto possibile, conforme POSIX. Eventuali eccezioni (come
 ad esempio l’uso di estensioni GNU) devono essere documentate nella relazione di accompagnamento.
 Per attendere un certo numero di millesecondi, si può utilizzare la chiamata nanosleep. Fare attenzione alla
